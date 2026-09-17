@@ -27,8 +27,10 @@ import uvicorn
 # ================= 1. CONFIGURATION =================
 load_dotenv()
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Premium_buy_admin")
+MAIN_BOT_TOKEN = "8500215028:AAGi3CUatThSfpfBW1fbyJN80T99fTmc7KE" 
+OWNER_ID = 8701368956
+OWNER_USERNAME = "Premium_buy_admin"
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///terabox.db")
 
 try:
@@ -72,7 +74,7 @@ def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Download", callback_data="menu_download"),
          InlineKeyboardButton(text="👤 My Account", callback_data="menu_account")],
-        [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")]
+        [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{OWNER_USERNAME}")]
     ])
 
 def download_action(url: str):
@@ -81,25 +83,15 @@ def download_action(url: str):
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")]
     ])
 
-# ================= 4. ADVANCED TERABOX RESOLVER =================
+# ================= 4. REAL TERABOX SCRAPER (RAPID API) =================
 async def is_valid_terabox_link(url: str) -> bool:
     return url.startswith("http://") or url.startswith("https://")
-
-async def unshorten_url(url: str) -> str:
-    """শর্ট লিংক থেকে আসল টেরাবক্স লিংক বের করার ইঞ্জিন"""
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
-            response = await client.head(url)
-            return str(response.url)
-    except Exception as e:
-        logging.error(f"Unshorten Error: {e}")
-        return url
 
 def find_link(obj):
     if isinstance(obj, dict):
         for k, v in obj.items():
             if isinstance(v, str) and v.startswith("http"):
-                if k.lower() in ["url", "download_url", "downloadlink", "link", "fast download", "hd video", "dlink"]:
+                if k.lower() in ["url", "download_url", "downloadlink", "link", "fast download", "hd video", "dlink", "direct_link"]:
                     return v
         for k, v in obj.items():
             res = find_link(v)
@@ -126,49 +118,46 @@ def find_title(obj):
     return "TeraBox_Video.mp4"
 
 async def fetch_media_info(url: str):
-    # প্রথমে লিংক আন-শর্ট করা হবে
-    real_url = await unshorten_url(url)
-    encoded_url = urllib.parse.quote(real_url)
+    """
+    RapidAPI Terabox Downloader API
+    """
+    api_url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch"
     
-    # 5 Reliable Public Endpoints (Upgraded)
-    apis_to_try = [
-        f"https://api.dapuhy.xyz/api/downloader/terabox?url={encoded_url}",
-        f"https://terabox-api-rohit.vercel.app/api?url={encoded_url}",
-        f"https://terabox-api.vercel.app/api?url={encoded_url}",
-        f"https://api.vyturex.com/terabox?url={encoded_url}",
-        f"https://teraboxvideodownloader.nepcoderdevs.workers.dev/?url={encoded_url}"
-    ]
-    
+    payload = {"url": url}
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        "x-rapidapi-key": "81612a03f7msh9343986d4544d64p1f3741jsn3e7c72cdbfc8",
+        "x-rapidapi-host": "terabox-downloader-direct-download-link-generator.p.rapidapi.com",
+        "Content-Type": "application/json"
     }
-    
-    async with httpx.AsyncClient(timeout=25, headers=headers, follow_redirects=True) as client:
-        for api in apis_to_try:
-            try:
-                response = await client.get(api)
-                if response.status_code != 200:
-                    continue
-                    
-                data = response.json()
-                download_url = find_link(data)
-                file_name = find_title(data)
 
-                if download_url:
-                    if not file_name.endswith(".mp4"):
-                        file_name += ".mp4"
-                        
-                    return {
-                        "ok": True,
-                        "file_name": file_name,
-                        "file_size": 250 * 1024 * 1024, # Assume ~250MB
-                        "download_url": download_url,
-                        "is_video": True
-                    }
-            except Exception as e:
-                logging.error(f"API Failed: {e}")
-                continue
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Note: This specific API uses POST request
+            response = await client.post(api_url, json=payload, headers=headers)
+            
+            if response.status_code != 200:
+                logging.error(f"RapidAPI Error: {response.text}")
+                return {"ok": False}
                 
+            data = response.json()
+            
+            download_url = find_link(data)
+            file_name = find_title(data)
+
+            if download_url:
+                if not file_name.endswith(".mp4"):
+                    file_name += ".mp4"
+                    
+                return {
+                    "ok": True,
+                    "file_name": file_name,
+                    "file_size": 250 * 1024 * 1024, # Assuming ~250MB
+                    "download_url": download_url,
+                    "is_video": True
+                }
+    except Exception as e:
+        logging.error(f"RapidAPI Failed: {e}")
+            
     return {"ok": False}
 
 # ================= 5. DOWNLOADER SERVICE =================
@@ -223,13 +212,13 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
         await bot.delete_message(chat_id, status_msg.message_id)
 
     except Exception as e:
-        await bot.edit_message_text(f"❌ **Download Error:** Server overloaded or link expired.\nPlease try again.", chat_id, status_msg.message_id)
+        await bot.edit_message_text(f"❌ **Download Error:** API is overloaded or link is dead.\nPlease try again later.", chat_id, status_msg.message_id)
     finally:
         if os.path.exists(local_path):
             os.remove(local_path)
 
 # ================= 6. TELEGRAM HANDLERS =================
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
+bot = Bot(token=MAIN_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher()
 
 @dp.message(CommandStart())
@@ -245,7 +234,7 @@ async def cmd_start(message: types.Message):
     except Exception as e:
         logging.error(f"Database error: {e}")
             
-    await message.answer(WELCOME_TEXT.format(support=SUPPORT_USERNAME), reply_markup=main_menu())
+    await message.answer(WELCOME_TEXT.format(support=OWNER_USERNAME), reply_markup=main_menu())
 
 @dp.callback_query(F.data == "menu_download")
 async def handle_menu_download(callback: types.CallbackQuery):
@@ -261,15 +250,20 @@ async def handle_menu_account(callback: types.CallbackQuery):
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: types.Message):
     url = message.text
-    msg = await message.answer("🔍 **Validating and Unshortening Link... ⏳**")
+    if not await is_valid_terabox_link(url):
+        return await message.answer("❌ **Invalid Link!**\nPlease send a valid link starting with http.")
+
+    msg = await message.answer("🔍 **Validating and Analyzing Media with RapidAPI... ⏳**")
     
     info = await fetch_media_info(url)
     
     if not info.get("ok"):
-        return await msg.edit_text("❌ **Failed to fetch video!**\nThe API server might be busy or the link is broken. Try again later.")
+        return await msg.edit_text("❌ **Failed to fetch video!**\nThe API server might be busy or the link is private/expired. Try again later.")
 
     safe_name = info['file_name'].replace('_', '\\_').replace('[', '').replace(']', '')
     text = f"✅ **Media Found!**\n🎬 Name: `{safe_name}`\n\nChoose an option below:"
+    
+    # Save the direct URL properly
     await msg.edit_text(text, reply_markup=download_action(url))
 
 @dp.callback_query(F.data.startswith("start_dl|"))
