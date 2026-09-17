@@ -81,25 +81,60 @@ def download_action(url: str):
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")]
     ])
 
-# ================= 4. REAL TERABOX SCRAPER SERVICE =================
+# ================= 4. REAL TERABOX SMART SCRAPER =================
 async def is_valid_terabox_link(url: str) -> bool:
-    # এখন যেকোনো HTTP লিংক গ্রহণ করবে, যাতে ডোমেইন পরিবর্তন হলেও বট কাজ করে।
     return url.startswith("http://") or url.startswith("https://")
 
+# Smart Universal Parser (Finds link no matter how the API changes)
+def find_link(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str) and v.startswith("http"):
+                if k.lower() in ["url", "download_url", "downloadlink", "link", "fast download", "hd video", "dlink"]:
+                    return v
+        for k, v in obj.items():
+            res = find_link(v)
+            if res: return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = find_link(item)
+            if res: return res
+    return None
+
+def find_title(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.lower() in ["title", "file_name", "name", "filename"]:
+                if isinstance(v, str) and v != "":
+                    return v
+        for k, v in obj.items():
+            res = find_title(v)
+            if res: return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = find_title(item)
+            if res: return res
+    return "TeraBox_Video.mp4"
+
 async def fetch_media_info(url: str):
-    """
-    ৩টি আলাদা Public API ব্যবহার করে আসল ভিডিওর ডাউনলোড লিংক বের করবে।
-    """
     encoded_url = urllib.parse.quote(url)
     
-    # List of Public APIs to try extracting the video link
+    # 5 Reliable Public Endpoints
     apis_to_try = [
-        f"https://terabox-api-rohit.vercel.app/api?url={encoded_url}",
         f"https://api.dapuhy.xyz/api/downloader/terabox?url={encoded_url}",
-        f"https://terabox-api.vercel.app/api?url={encoded_url}"
+        f"https://terabox-api-rohit.vercel.app/api?url={encoded_url}",
+        f"https://terabox-api.vercel.app/api?url={encoded_url}",
+        f"https://api.vyturex.com/terabox?url={encoded_url}",
+        f"https://teraboxvideodownloader.nepcoderdevs.workers.dev/?url={encoded_url}"
     ]
     
-    async with httpx.AsyncClient(timeout=20) as client:
+    # Browser Spoofer Headers (To bypass Render IP Blocks)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+    
+    async with httpx.AsyncClient(timeout=25, headers=headers, follow_redirects=True) as client:
         for api in apis_to_try:
             try:
                 response = await client.get(api)
@@ -107,24 +142,19 @@ async def fetch_media_info(url: str):
                     continue
                     
                 data = response.json()
-                download_url = None
-                file_name = "TeraBox_Video.mp4"
                 
-                # Parsing logic based on different API responses
-                if isinstance(data, list) and len(data) > 0:
-                    resolutions = data[0].get("resolutions", {})
-                    download_url = resolutions.get("Fast Download") or resolutions.get("HD Video") or list(resolutions.values())[0] if resolutions else None
-                    file_name = data[0].get("title", file_name)
-                    
-                elif isinstance(data, dict):
-                    download_url = data.get("url") or data.get("download_url") or data.get("result", {}).get("url")
-                    file_name = data.get("title") or data.get("result", {}).get("title", file_name)
+                # Smart Extraction
+                download_url = find_link(data)
+                file_name = find_title(data)
 
                 if download_url:
+                    if not file_name.endswith(".mp4"):
+                        file_name += ".mp4"
+                        
                     return {
                         "ok": True,
                         "file_name": file_name,
-                        "file_size": 250 * 1024 * 1024, # Public APIs often don't return accurate size, assuming ~250MB
+                        "file_size": 250 * 1024 * 1024, # Free APIs mask real size, assuming ~250MB
                         "download_url": download_url,
                         "is_video": True
                     }
@@ -142,10 +172,10 @@ def format_size(size: int) -> str:
     return f"{size} B"
 
 async def generate_progress_bar(current, total, start_time):
-    # Free APIs might not send Total Size, so we handle it dynamically
-    total = total if total > 0 else current + (10*1024*1024) 
+    # Dynamic Total Calculation if API masks the real total size
+    total = total if total > 0 else current + (10 * 1024 * 1024) 
     percent = int(current * 100 / total) if total > 0 else 0
-    percent = min(percent, 100) # Cap at 100%
+    percent = min(percent, 100) # Limit to 100%
     
     filled = '█' * (percent // 10)
     empty = '░' * (10 - (percent // 10))
@@ -159,9 +189,12 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
     start_time = time.time()
     last_update = 0
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    }
+
     try:
-        # Download the actual video from Terabox Servers
-        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=None, follow_redirects=True, headers=headers) as client:
             async with client.stream("GET", direct_url) as response:
                 total_size = int(response.headers.get("content-length", 0))
                 with open(local_path, "wb") as f:
@@ -179,13 +212,12 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
 
         await bot.edit_message_text("📤 **Uploading to Telegram... Please wait.**", chat_id, status_msg.message_id)
         
-        # Uploading real video to Telegram
         file = FSInputFile(local_path)
         await bot.send_video(chat_id, video=file, caption=f"✅ **Downloaded Successfully!**\n🎬 `{file_name}`")
         await bot.delete_message(chat_id, status_msg.message_id)
 
     except Exception as e:
-        await bot.edit_message_text(f"❌ **Download Error:** API is overloaded or link is dead.\nPlease try again later.", chat_id, status_msg.message_id)
+        await bot.edit_message_text(f"❌ **Download Error:** API server overloaded or link expired.\nPlease try again.", chat_id, status_msg.message_id)
     finally:
         if os.path.exists(local_path):
             os.remove(local_path)
@@ -228,20 +260,13 @@ async def handle_link(message: types.Message):
 
     msg = await message.answer("🔍 **Validating and Analyzing Media... ⏳**")
     
-    # 1. Fetching Real Info from API
     info = await fetch_media_info(url)
     
     if not info.get("ok"):
         return await msg.edit_text("❌ **Failed to fetch video!**\nThe free API server might be busy or the link is private/expired. Try again later.")
 
-    # 2. Displaying Info & Download Button
-    # Link is converted to safe format to avoid Markdown errors
     safe_name = info['file_name'].replace('_', '\\_').replace('[', '').replace(']', '')
-    
     text = f"✅ **Media Found!**\n🎬 Name: `{safe_name}`\n\nChoose an option below:"
-    
-    # Saving direct link in callback data is tricky due to 64 byte limit, 
-    # we pass the original URL to the download function instead
     await msg.edit_text(text, reply_markup=download_action(url))
 
 @dp.callback_query(F.data.startswith("start_dl|"))
@@ -249,7 +274,6 @@ async def process_download(callback: types.CallbackQuery):
     url = callback.data.split("|", 1)[1]
     await callback.message.edit_text("⏳ **Extracting direct link & Starting Download...**")
     
-    # Fetch real direct link again to avoid expiration
     info = await fetch_media_info(url)
     if not info.get("ok"):
         await callback.message.edit_text("❌ **Failed to start download!** Server busy.")
@@ -258,7 +282,6 @@ async def process_download(callback: types.CallbackQuery):
     direct_url = info["download_url"]
     file_name = info["file_name"]
     
-    # Start async task to download real video
     asyncio.create_task(download_and_send(bot, callback.message.chat.id, direct_url, file_name, callback.message))
     await callback.answer()
 
@@ -268,7 +291,6 @@ async def cancel_dl(callback: types.CallbackQuery):
     await callback.answer()
 
 # ================= 7. FASTAPI SERVER FOR RENDER =================
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Initializing Database...")
