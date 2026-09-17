@@ -6,6 +6,7 @@ import re
 import httpx
 from datetime import datetime
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Aiogram Imports
 from aiogram import Bot, Dispatcher, F, types
@@ -23,10 +24,16 @@ import uvicorn
 
 # ================= 1. CONFIGURATION =================
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "Premium_buy_admin")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///terabox.db")
-MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_GB", 2)) * 1024 * 1024 * 1024
+
+# 토কেন না পেলে যেন ক্র্যাশ না করে সেই ব্যবস্থা
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Premium_buy_admin")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///terabox.db")
+
+try:
+    MAX_FILE_SIZE_BYTES = int(os.environ.get("MAX_FILE_SIZE_GB", 2)) * 1024 * 1024 * 1024
+except:
+    MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -96,6 +103,7 @@ def format_size(size: int) -> str:
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024.0: return f"{size:.2f} {unit}"
         size /= 1024.0
+    return f"{size} B"
 
 async def generate_progress_bar(current, total, start_time):
     percent = int(current * 100 / total) if total > 0 else 0
@@ -147,7 +155,6 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    # Save user to DB
     async with async_session() as session:
         user = await session.get(User, message.from_user.id)
         if not user:
@@ -179,7 +186,6 @@ async def handle_link(message: types.Message):
 async def process_download(callback: types.CallbackQuery):
     url = callback.data.split("|")[1]
     await callback.message.edit_text("⏳ **Download Started...**")
-    # Start async task so it doesn't block the bot
     asyncio.create_task(download_and_send(bot, callback.message.chat.id, url, "TeraBox_File.mp4", callback.message))
     await callback.answer()
 
@@ -189,19 +195,25 @@ async def cancel_dl(callback: types.CallbackQuery):
     await callback.answer()
 
 # ================= 7. FASTAPI SERVER FOR RENDER =================
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    logging.info("Initializing Database...")
+    await init_db()
+    logging.info("Starting Telegram Bot...")
+    asyncio.create_task(dp.start_polling(bot))
+    yield
+    # --- Shutdown ---
+    logging.info("Shutting down bot...")
+    await bot.session.close()
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def read_root():
-    return {"status": "TeraBox Bot is Running perfectly! 🚀"}
-
-async def start_bot():
-    await init_db()
-    logging.info("Starting Telegram Bot Polling...")
-    await dp.start_polling(bot)
+    return {"status": "TeraBox Premium Bot is Running perfectly! 🚀"}
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_bot())
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
