@@ -81,11 +81,20 @@ def download_action(url: str):
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")]
     ])
 
-# ================= 4. REAL TERABOX SMART SCRAPER =================
+# ================= 4. ADVANCED TERABOX RESOLVER =================
 async def is_valid_terabox_link(url: str) -> bool:
     return url.startswith("http://") or url.startswith("https://")
 
-# Smart Universal Parser (Finds link no matter how the API changes)
+async def unshorten_url(url: str) -> str:
+    """শর্ট লিংক থেকে আসল টেরাবক্স লিংক বের করার ইঞ্জিন"""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            response = await client.head(url)
+            return str(response.url)
+    except Exception as e:
+        logging.error(f"Unshorten Error: {e}")
+        return url
+
 def find_link(obj):
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -117,9 +126,11 @@ def find_title(obj):
     return "TeraBox_Video.mp4"
 
 async def fetch_media_info(url: str):
-    encoded_url = urllib.parse.quote(url)
+    # প্রথমে লিংক আন-শর্ট করা হবে
+    real_url = await unshorten_url(url)
+    encoded_url = urllib.parse.quote(real_url)
     
-    # 5 Reliable Public Endpoints
+    # 5 Reliable Public Endpoints (Upgraded)
     apis_to_try = [
         f"https://api.dapuhy.xyz/api/downloader/terabox?url={encoded_url}",
         f"https://terabox-api-rohit.vercel.app/api?url={encoded_url}",
@@ -128,10 +139,8 @@ async def fetch_media_info(url: str):
         f"https://teraboxvideodownloader.nepcoderdevs.workers.dev/?url={encoded_url}"
     ]
     
-    # Browser Spoofer Headers (To bypass Render IP Blocks)
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     }
     
     async with httpx.AsyncClient(timeout=25, headers=headers, follow_redirects=True) as client:
@@ -142,8 +151,6 @@ async def fetch_media_info(url: str):
                     continue
                     
                 data = response.json()
-                
-                # Smart Extraction
                 download_url = find_link(data)
                 file_name = find_title(data)
 
@@ -154,7 +161,7 @@ async def fetch_media_info(url: str):
                     return {
                         "ok": True,
                         "file_name": file_name,
-                        "file_size": 250 * 1024 * 1024, # Free APIs mask real size, assuming ~250MB
+                        "file_size": 250 * 1024 * 1024, # Assume ~250MB
                         "download_url": download_url,
                         "is_video": True
                     }
@@ -172,10 +179,9 @@ def format_size(size: int) -> str:
     return f"{size} B"
 
 async def generate_progress_bar(current, total, start_time):
-    # Dynamic Total Calculation if API masks the real total size
     total = total if total > 0 else current + (10 * 1024 * 1024) 
     percent = int(current * 100 / total) if total > 0 else 0
-    percent = min(percent, 100) # Limit to 100%
+    percent = min(percent, 100) 
     
     filled = '█' * (percent // 10)
     empty = '░' * (10 - (percent // 10))
@@ -217,7 +223,7 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
         await bot.delete_message(chat_id, status_msg.message_id)
 
     except Exception as e:
-        await bot.edit_message_text(f"❌ **Download Error:** API server overloaded or link expired.\nPlease try again.", chat_id, status_msg.message_id)
+        await bot.edit_message_text(f"❌ **Download Error:** Server overloaded or link expired.\nPlease try again.", chat_id, status_msg.message_id)
     finally:
         if os.path.exists(local_path):
             os.remove(local_path)
@@ -255,15 +261,12 @@ async def handle_menu_account(callback: types.CallbackQuery):
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: types.Message):
     url = message.text
-    if not await is_valid_terabox_link(url):
-        return await message.answer("❌ **Invalid Link!**\nPlease send a valid link starting with http.")
-
-    msg = await message.answer("🔍 **Validating and Analyzing Media... ⏳**")
+    msg = await message.answer("🔍 **Validating and Unshortening Link... ⏳**")
     
     info = await fetch_media_info(url)
     
     if not info.get("ok"):
-        return await msg.edit_text("❌ **Failed to fetch video!**\nThe free API server might be busy or the link is private/expired. Try again later.")
+        return await msg.edit_text("❌ **Failed to fetch video!**\nThe API server might be busy or the link is broken. Try again later.")
 
     safe_name = info['file_name'].replace('_', '\\_').replace('[', '').replace(']', '')
     text = f"✅ **Media Found!**\n🎬 Name: `{safe_name}`\n\nChoose an option below:"
