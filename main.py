@@ -14,7 +14,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.client.default import DefaultBotProperties
 
-# Database Imports (Added 'select' for correct DB queries)
+# Database Imports
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -80,19 +80,28 @@ def download_action(url: str):
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")]
     ])
 
-# ================= 4. TERABOX SERVICE =================
-TERABOX_REGEX = re.compile(r'https?://(?:www\.)?(terabox\.com|teraboxapp\.com|terasharelink\.com|1024tera\.com|teraboxlink\.com)/[a-zA-Z0-9_-]+')
+# ================= 4. TERABOX SERVICE (ALL LINKS SUPPORTED) =================
+# টেরাবক্সের সমস্ত ডোমেইন এখানে অ্যাড করা হয়েছে
+TERABOX_DOMAINS = [
+    "terabox.com", "teraboxapp.com", "terabox.link", "terabox.app",
+    "1024tera.com", "4funbox.com", "mirrobox.com", "nephobox.com",
+    "freeterabox.com", "momerybox.com", "terasharelink.com", "teraboxlink.com",
+    "terabox.fun"
+]
 
 async def is_valid_terabox_link(url: str) -> bool:
-    return bool(TERABOX_REGEX.search(url))
+    # লিংকটি টেরাবক্সের কোনো ডোমেইনের সাথে মিলে কিনা চেক করবে
+    return any(domain in url for domain in TERABOX_DOMAINS)
 
 async def fetch_media_info(url: str):
     """
-    (MOCK IMPLEMENTATION) - Replace with real TeraBox API later.
+    (MOCK IMPLEMENTATION)
+    বর্তমানে এটি একটি ডেমো ভিডিও ডাউনলোড করে দেখাবে প্রজেক্ট ঠিকমতো কাজ করছে কিনা। 
+    বাস্তবে আসল টেরাবক্স ভিডিও ডাউনলোড করতে হলে এখানে আপনার কেনা API (RapidAPI/Custom) বসাতে হবে।
     """
     return {
         "ok": True,
-        "file_name": "Terabox_Video.mp4",
+        "file_name": "TeraBox_Video_Download.mp4",
         "file_size": 50 * 1024 * 1024, # 50 MB Example
         "download_url": "https://sample-videos.com/video321/mp4/720/big_buck_bunny_720p_50mb.mp4",
         "is_video": True
@@ -140,7 +149,7 @@ async def download_and_send(bot: Bot, chat_id: int, url: str, file_name: str, st
         await bot.edit_message_text("📤 **Uploading to Telegram... Please wait.**", chat_id, status_msg.message_id)
         
         file = FSInputFile(local_path)
-        await bot.send_document(chat_id, document=file, caption=f"✅ **Downloaded:** {file_name}")
+        await bot.send_document(chat_id, document=file, caption=f"✅ **Downloaded Successfully!**")
         await bot.delete_message(chat_id, status_msg.message_id)
 
     except Exception as e:
@@ -155,7 +164,6 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    # Fixed DB Error: Now correctly checks if user exists before saving
     try:
         async with async_session() as session:
             result = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
@@ -169,7 +177,6 @@ async def cmd_start(message: types.Message):
             
     await message.answer(WELCOME_TEXT.format(support=SUPPORT_USERNAME), reply_markup=main_menu())
 
-# Added Missing Button Handlers
 @dp.callback_query(F.data == "menu_download")
 async def handle_menu_download(callback: types.CallbackQuery):
     await callback.message.reply("🔗 **Please send me a valid TeraBox share link to download.**")
@@ -203,7 +210,7 @@ async def handle_link(message: types.Message):
 async def process_download(callback: types.CallbackQuery):
     url = callback.data.split("|")[1]
     await callback.message.edit_text("⏳ **Download Started...**")
-    asyncio.create_task(download_and_send(bot, callback.message.chat.id, url, "TeraBox_File.mp4", callback.message))
+    asyncio.create_task(download_and_send(bot, callback.message.chat.id, url, "TeraBox_Video.mp4", callback.message))
     await callback.answer()
 
 @dp.callback_query(F.data == "cancel_action")
@@ -215,13 +222,11 @@ async def cancel_dl(callback: types.CallbackQuery):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- Startup ---
     logging.info("Initializing Database...")
     await init_db()
     logging.info("Starting Telegram Bot...")
     asyncio.create_task(dp.start_polling(bot))
     yield
-    # --- Shutdown ---
     logging.info("Shutting down bot...")
     await bot.session.close()
 
