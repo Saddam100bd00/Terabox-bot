@@ -27,10 +27,8 @@ import uvicorn
 # ================= 1. CONFIGURATION =================
 load_dotenv()
 
-MAIN_BOT_TOKEN = "8500215028:AAGi3CUatThSfpfBW1fbyJN80T99fTmc7KE" 
-OWNER_ID = 8701368956
-OWNER_USERNAME = "Premium_buy_admin"
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Premium_buy_admin")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///terabox.db")
 
 try:
@@ -74,7 +72,7 @@ def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Download", callback_data="menu_download"),
          InlineKeyboardButton(text="👤 My Account", callback_data="menu_account")],
-        [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{OWNER_USERNAME}")]
+        [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{SUPPORT_USERNAME.replace('@','')}")]
     ])
 
 def download_action(url: str):
@@ -118,11 +116,7 @@ def find_title(obj):
     return "TeraBox_Video.mp4"
 
 async def fetch_media_info(url: str):
-    """
-    RapidAPI Terabox Downloader API
-    """
     api_url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch"
-    
     payload = {"url": url}
     headers = {
         "x-rapidapi-key": "81612a03f7msh9343986d4544d64p1f3741jsn3e7c72cdbfc8",
@@ -132,26 +126,22 @@ async def fetch_media_info(url: str):
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            # Note: This specific API uses POST request
             response = await client.post(api_url, json=payload, headers=headers)
-            
             if response.status_code != 200:
                 logging.error(f"RapidAPI Error: {response.text}")
                 return {"ok": False}
                 
             data = response.json()
-            
             download_url = find_link(data)
             file_name = find_title(data)
 
             if download_url:
                 if not file_name.endswith(".mp4"):
                     file_name += ".mp4"
-                    
                 return {
                     "ok": True,
                     "file_name": file_name,
-                    "file_size": 250 * 1024 * 1024, # Assuming ~250MB
+                    "file_size": 250 * 1024 * 1024,
                     "download_url": download_url,
                     "is_video": True
                 }
@@ -183,7 +173,6 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
     local_path = os.path.join(DOWNLOAD_DIR, file_name)
     start_time = time.time()
     last_update = 0
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     }
@@ -218,7 +207,7 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
             os.remove(local_path)
 
 # ================= 6. TELEGRAM HANDLERS =================
-bot = Bot(token=MAIN_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher()
 
 @dp.message(CommandStart())
@@ -234,7 +223,7 @@ async def cmd_start(message: types.Message):
     except Exception as e:
         logging.error(f"Database error: {e}")
             
-    await message.answer(WELCOME_TEXT.format(support=OWNER_USERNAME), reply_markup=main_menu())
+    await message.answer(WELCOME_TEXT.format(support=SUPPORT_USERNAME), reply_markup=main_menu())
 
 @dp.callback_query(F.data == "menu_download")
 async def handle_menu_download(callback: types.CallbackQuery):
@@ -262,8 +251,6 @@ async def handle_link(message: types.Message):
 
     safe_name = info['file_name'].replace('_', '\\_').replace('[', '').replace(']', '')
     text = f"✅ **Media Found!**\n🎬 Name: `{safe_name}`\n\nChoose an option below:"
-    
-    # Save the direct URL properly
     await msg.edit_text(text, reply_markup=download_action(url))
 
 @dp.callback_query(F.data.startswith("start_dl|"))
@@ -293,6 +280,10 @@ async def lifespan(app: FastAPI):
     logging.info("Initializing Database...")
     await init_db()
     logging.info("Starting Telegram Bot...")
+    
+    # এটি যুক্ত করা হয়েছে যাতে পুরনো জ্যাম হয়ে থাকা কমান্ডগুলো রান না হয়
+    await bot.delete_webhook(drop_pending_updates=True) 
+    
     asyncio.create_task(dp.start_polling(bot))
     yield
     logging.info("Shutting down bot...")
