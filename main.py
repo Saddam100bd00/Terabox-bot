@@ -81,15 +81,24 @@ def download_action(url: str):
         [InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")]
     ])
 
-# ================= 4. REAL TERABOX SCRAPER (RAPID API) =================
+# ================= 4. ADVANCED URL RESOLVER & SCRAPER =================
 async def is_valid_terabox_link(url: str) -> bool:
     return url.startswith("http://") or url.startswith("https://")
+
+async def unshorten_url(url: str) -> str:
+    """শর্ট লিংক আন-শর্ট করে আসল লিংক বের করার ইঞ্জিন"""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            response = await client.head(url)
+            return str(response.url)
+    except:
+        return url
 
 def find_link(obj):
     if isinstance(obj, dict):
         for k, v in obj.items():
             if isinstance(v, str) and v.startswith("http"):
-                if k.lower() in ["url", "download_url", "downloadlink", "link", "fast download", "hd video", "dlink", "direct_link"]:
+                if k.lower() in ["url", "download_url", "downloadlink", "link", "fast download", "hd video", "dlink", "direct_link", "video"]:
                     return v
         for k, v in obj.items():
             res = find_link(v)
@@ -116,8 +125,12 @@ def find_title(obj):
     return "TeraBox_Video.mp4"
 
 async def fetch_media_info(url: str):
-    api_url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch"
-    payload = {"url": url}
+    # ১. লিংক আনশর্ট করা
+    real_url = await unshorten_url(url)
+    encoded_url = urllib.parse.quote(real_url)
+    
+    # ২. RapidAPI (আপনার কেনা API)
+    rapid_api_url = "https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch"
     headers = {
         "x-rapidapi-key": "81612a03f7msh9343986d4544d64p1f3741jsn3e7c72cdbfc8",
         "x-rapidapi-host": "terabox-downloader-direct-download-link-generator.p.rapidapi.com",
@@ -125,29 +138,39 @@ async def fetch_media_info(url: str):
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(api_url, json=payload, headers=headers)
-            if response.status_code != 200:
-                logging.error(f"RapidAPI Error: {response.text}")
-                return {"ok": False}
-                
-            data = response.json()
-            download_url = find_link(data)
-            file_name = find_title(data)
-
-            if download_url:
-                if not file_name.endswith(".mp4"):
-                    file_name += ".mp4"
-                return {
-                    "ok": True,
-                    "file_name": file_name,
-                    "file_size": 250 * 1024 * 1024,
-                    "download_url": download_url,
-                    "is_video": True
-                }
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(rapid_api_url, json={"url": real_url}, headers=headers)
+            if res.status_code == 200:
+                data = res.json()
+                dl = find_link(data)
+                if dl:
+                    file_name = find_title(data)
+                    if not file_name.endswith(".mp4"): file_name += ".mp4"
+                    return {"ok": True, "file_name": file_name, "file_size": 250*1024*1024, "download_url": dl}
     except Exception as e:
-        logging.error(f"RapidAPI Failed: {e}")
-            
+        logging.error(f"RapidAPI failed: {e}")
+
+    # ৩. Fallback APIs (RapidAPI ফেইল হলে এগুলো কাজ করবে)
+    fallback_apis = [
+        f"https://api.dapuhy.xyz/api/downloader/terabox?url={encoded_url}",
+        f"https://terabox-api-rohit.vercel.app/api?url={encoded_url}",
+        f"https://terabox-api.vercel.app/api?url={encoded_url}"
+    ]
+    
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        for api in fallback_apis:
+            try:
+                res = await client.get(api)
+                if res.status_code == 200:
+                    data = res.json()
+                    dl = find_link(data)
+                    if dl:
+                        file_name = find_title(data)
+                        if not file_name.endswith(".mp4"): file_name += ".mp4"
+                        return {"ok": True, "file_name": file_name, "file_size": 250*1024*1024, "download_url": dl}
+            except Exception:
+                continue
+                
     return {"ok": False}
 
 # ================= 5. DOWNLOADER SERVICE =================
@@ -173,6 +196,7 @@ async def download_and_send(bot: Bot, chat_id: int, direct_url: str, file_name: 
     local_path = os.path.join(DOWNLOAD_DIR, file_name)
     start_time = time.time()
     last_update = 0
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     }
@@ -242,12 +266,12 @@ async def handle_link(message: types.Message):
     if not await is_valid_terabox_link(url):
         return await message.answer("❌ **Invalid Link!**\nPlease send a valid link starting with http.")
 
-    msg = await message.answer("🔍 **Validating and Analyzing Media with RapidAPI... ⏳**")
+    msg = await message.answer("🔍 **Validating and Analyzing Media... ⏳**")
     
     info = await fetch_media_info(url)
     
     if not info.get("ok"):
-        return await msg.edit_text("❌ **Failed to fetch video!**\nThe API server might be busy or the link is private/expired. Try again later.")
+        return await msg.edit_text("❌ **Failed to fetch video!**\nThe free API server might be busy or the link is private/expired. Try again later.")
 
     safe_name = info['file_name'].replace('_', '\\_').replace('[', '').replace(']', '')
     text = f"✅ **Media Found!**\n🎬 Name: `{safe_name}`\n\nChoose an option below:"
@@ -280,10 +304,7 @@ async def lifespan(app: FastAPI):
     logging.info("Initializing Database...")
     await init_db()
     logging.info("Starting Telegram Bot...")
-    
-    # এটি যুক্ত করা হয়েছে যাতে পুরনো জ্যাম হয়ে থাকা কমান্ডগুলো রান না হয়
     await bot.delete_webhook(drop_pending_updates=True) 
-    
     asyncio.create_task(dp.start_polling(bot))
     yield
     logging.info("Shutting down bot...")
