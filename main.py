@@ -12,10 +12,10 @@ from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
-from aiogram.client.default import DefaultBotProperties  # <--- নতুন ইমপোর্ট
+from aiogram.client.default import DefaultBotProperties
 
-# Database Imports
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger
+# Database Imports (Added 'select' for correct DB queries)
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger, select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -150,20 +150,36 @@ async def download_and_send(bot: Bot, chat_id: int, url: str, file_name: str, st
             os.remove(local_path)
 
 # ================= 6. TELEGRAM HANDLERS =================
-# <--- এখানেই আপডেট করা হয়েছে (DefaultBotProperties যুক্ত করে) --->
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    async with async_session() as session:
-        user = await session.get(User, message.from_user.id)
-        if not user:
-            new_user = User(telegram_id=message.from_user.id, username=message.from_user.username)
-            session.add(new_user)
-            await session.commit()
+    # Fixed DB Error: Now correctly checks if user exists before saving
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+            user = result.scalar_one_or_none()
+            if not user:
+                new_user = User(telegram_id=message.from_user.id, username=message.from_user.username)
+                session.add(new_user)
+                await session.commit()
+    except Exception as e:
+        logging.error(f"Database error: {e}")
             
     await message.answer(WELCOME_TEXT.format(support=SUPPORT_USERNAME), reply_markup=main_menu())
+
+# Added Missing Button Handlers
+@dp.callback_query(F.data == "menu_download")
+async def handle_menu_download(callback: types.CallbackQuery):
+    await callback.message.reply("🔗 **Please send me a valid TeraBox share link to download.**")
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu_account")
+async def handle_menu_account(callback: types.CallbackQuery):
+    acc_text = f"👤 **Your Account Details**\n━━━━━━━━━━━━━━━━━━━━\n🆔 **ID:** `{callback.from_user.id}`\n⭐ **Status:** Free User\n\n_(Premium features and stats coming soon!)_"
+    await callback.message.reply(acc_text)
+    await callback.answer()
 
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: types.Message):
