@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.client.default import DefaultBotProperties  # <--- নতুন ইমপোর্ট
 
 # Database Imports
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, BigInteger
@@ -25,7 +26,6 @@ import uvicorn
 # ================= 1. CONFIGURATION =================
 load_dotenv()
 
-# 토কেন না পেলে যেন ক্র্যাশ না করে সেই ব্যবস্থা
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 SUPPORT_USERNAME = os.environ.get("SUPPORT_USERNAME", "Premium_buy_admin")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///terabox.db")
@@ -150,7 +150,8 @@ async def download_and_send(bot: Bot, chat_id: int, url: str, file_name: str, st
             os.remove(local_path)
 
 # ================= 6. TELEGRAM HANDLERS =================
-bot = Bot(token=BOT_TOKEN, parse_mode="Markdown")
+# <--- এখানেই আপডেট করা হয়েছে (DefaultBotProperties যুক্ত করে) --->
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher()
 
 @dp.message(CommandStart())
